@@ -2,6 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
+import os
+
+# Optional: Set your Mapbox token (you can get one for free from mapbox.com)
+os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoiaGdoYXJiaSIsImEiOiJjbWNicWdkb3owMDF6MmlzN2I3anB5Z2dlIn0.ljceQWywa9x-yh0cG0vcPQ"  # Remplace par ta vraie clé
 
 # 1️⃣ Page Configuration
 st.set_page_config(layout="wide")
@@ -11,9 +15,7 @@ st.set_page_config(layout="wide")
 def load_data():
     df = pd.read_excel("VerticalProfiles_with_thermocline_chloro.xlsx")
     df = df.dropna(subset=["Latitude", "Longitude", "StationNewName"])
-    # 💡 Force the station name as a string to avoid numeric pitfalls
     df["StationNewName"] = df["StationNewName"].astype(str)
-    # 🚫 Exclude specific stations by string comparison
     df = df[~df["StationNewName"].isin(["2.75", "21.25", "21.75"])]
     return df
 
@@ -24,23 +26,22 @@ st.title("🌊 Interactive Vertical Profile Visualization by Station")
 # 3️⃣ Map and Station Selection
 st.subheader("1️⃣ Click on a station or choose from the list")
 
-station_coords = df.groupby("StationNewName")[["Latitude", "Longitude"]].mean().reset_index()
+# Utiliser la première latitude/longitude rencontrée par station
+station_coords = df.groupby("StationNewName")[["Latitude", "Longitude"]].first().reset_index()
 
-# Merge station data with FullCycle column
+# Ajouter l'info sur FullCycle
 station_coords = station_coords.merge(df[["StationNewName", "FullCycle"]].drop_duplicates(), on="StationNewName", how="left")
-
-# Fill NaN in 'FullCycle' with 0
 station_coords["FullCycle"] = station_coords["FullCycle"].fillna(0)
 
-# List stations with FullCycle == 1 (green) and FullCycle == 0 (default)
+# Séparer les stations
 fullcycle_stations = station_coords[station_coords["FullCycle"] == 1]
 normal_stations = station_coords[station_coords["FullCycle"] == 0]
 
+# Sélecteur de station
 selected_station = st.selectbox("📍 Select a station:", station_coords["StationNewName"].unique())
-
 selected_coords = station_coords[station_coords["StationNewName"] == selected_station].iloc[0]
 
-# Map with zoom centered on selected station
+# Afficher la carte avec pydeck
 st.pydeck_chart(pdk.Deck(
     map_style="mapbox://styles/mapbox/light-v9",
     initial_view_state=pdk.ViewState(
@@ -55,7 +56,7 @@ st.pydeck_chart(pdk.Deck(
             data=normal_stations,
             get_position='[Longitude, Latitude]',
             get_radius=1000,
-            get_fill_color='[0, 0, 200, 160]',  # Normal stations
+            get_fill_color='[0, 0, 200, 160]',
             pickable=True,
             auto_highlight=True
         ),
@@ -64,7 +65,7 @@ st.pydeck_chart(pdk.Deck(
             data=fullcycle_stations,
             get_position='[Longitude, Latitude]',
             get_radius=1000,
-            get_fill_color='[0, 255, 0, 160]',  # Stations with FullCycle == 1 (green)
+            get_fill_color='[0, 255, 0, 160]',
             pickable=True,
             auto_highlight=True
         ),
@@ -73,19 +74,18 @@ st.pydeck_chart(pdk.Deck(
             data=pd.DataFrame([selected_coords]),
             get_position='[Longitude, Latitude]',
             get_radius=1500,
-            get_fill_color='[255, 0, 0, 200]',  # Selected station in red
+            get_fill_color='[255, 0, 0, 200]',
             pickable=False,
         )
     ],
     tooltip={"text": "{StationNewName}"}
 ))
 
-# Add explanatory text below the map
 st.markdown("""
     **💡 Note:** The **green** circles on the map represent stations with Full Cycle measurements.
 """)
 
-# 4️⃣ Filter Data and Select Parameters
+# 4️⃣ Filtrage des données et sélection des paramètres
 station_df = df[df["StationNewName"] == selected_station]
 
 parameter_options = ["Temp", "pH", "ODO%", "ODO Conc", "Turbidity"]
@@ -100,7 +100,7 @@ selected_day = st.selectbox("🕐 Day Period:", time_options)
 show_thermocline = st.checkbox("Show Thermocline", value=False)
 show_max_chloro = st.checkbox("Show Max Chloro", value=False)
 
-# 5️⃣ Prepare 8 max curves (RWAM, RWPM, etc.)
+# 5️⃣ Préparation des courbes verticales
 available_periods = ["LW", "RW", "HW", "FW"]
 available_day = ["AM", "PM"]
 
@@ -118,7 +118,7 @@ if combinations:
 else:
     filtered_combined_df = pd.DataFrame()
 
-# Apply 'All' or specific filters
+# Application des filtres
 if selected_water != "All":
     filtered_combined_df = filtered_combined_df[filtered_combined_df["WaterPeriod"] == selected_water]
 if selected_day != "All":
