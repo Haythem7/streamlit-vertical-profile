@@ -4,44 +4,33 @@ import plotly.graph_objects as go
 import pydeck as pdk
 import os
 
-# Optional: Set your Mapbox token (you can get one for free from mapbox.com)
-os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoiaGdoYXJiaSIsImEiOiJjbWNicWdkb3owMDF6MmlzN2I3anB5Z2dlIn0.ljceQWywa9x-yh0cG0vcPQ"  # Remplace par ta vraie clé
+# Set Mapbox token
+os.environ["MAPBOX_API_KEY"] = "pk.eyJ1IjoiaGdoYXJiaSIsImEiOiJjbWNicWdkb3owMDF6MmlzN2I3anB5Z2dlIn0.ljceQWywa9x-yh0cG0vcPQ"
 
-# 1️⃣ Page Configuration
 st.set_page_config(layout="wide")
 
-# 2️⃣ Load Data
 @st.cache_data
 def load_data():
-    df = pd.read_excel("VerticalProfiles_with_thermocline_chloro.xlsx")
-    df = df.dropna(subset=["Latitude", "Longitude", "StationNewName"])
-    df["StationNewName"] = df["StationNewName"].astype(str)
-    df = df[~df["StationNewName"].isin(["2.75", "21.25", "21.75"])]
+    df = pd.read_excel("Filtered_dataset.xlsx")
+    df = df.dropna(subset=["Latitude", "Longitude", "Station"])
+    df["Station"] = df["Station"].astype(str)
     return df
 
 df = load_data()
 
 st.title("🌊 Interactive Vertical Profile Visualization by Station")
-
-# 3️⃣ Map and Station Selection
 st.subheader("1️⃣ Click on a station or choose from the list")
 
-# Utiliser la première latitude/longitude rencontrée par station
-station_coords = df.groupby("StationNewName")[["Latitude", "Longitude"]].first().reset_index()
-
-# Ajouter l'info sur FullCycle
-station_coords = station_coords.merge(df[["StationNewName", "FullCycle"]].drop_duplicates(), on="StationNewName", how="left")
+station_coords = df.groupby("Station")[["Latitude", "Longitude"]].first().reset_index()
+station_coords = station_coords.merge(df[["Station", "FullCycle"]].drop_duplicates(), on="Station", how="left")
 station_coords["FullCycle"] = station_coords["FullCycle"].fillna(0)
 
-# Séparer les stations
 fullcycle_stations = station_coords[station_coords["FullCycle"] == 1]
 normal_stations = station_coords[station_coords["FullCycle"] == 0]
 
-# Sélecteur de station
-selected_station = st.selectbox("📍 Select a station:", station_coords["StationNewName"].unique())
-selected_coords = station_coords[station_coords["StationNewName"] == selected_station].iloc[0]
+selected_station = st.selectbox("📍 Select a station:", station_coords["Station"].unique())
+selected_coords = station_coords[station_coords["Station"] == selected_station].iloc[0]
 
-# Afficher la carte avec pydeck
 st.pydeck_chart(pdk.Deck(
     map_style="mapbox://styles/mapbox/light-v9",
     initial_view_state=pdk.ViewState(
@@ -78,60 +67,55 @@ st.pydeck_chart(pdk.Deck(
             pickable=False,
         )
     ],
-    tooltip={"text": "{StationNewName}"}
+    tooltip={"text": "{Station}"}
 ))
 
-st.markdown("""
-    **💡 Note:** The **green** circles on the map represent stations with Full Cycle measurements.
-""")
+st.markdown("**💡 Note:** The **green** circles on the map represent stations with Full Cycle measurements.")
 
-# 4️⃣ Filtrage des données et sélection des paramètres
-station_df = df[df["StationNewName"] == selected_station]
+# 📊 Parameters and Filters
+station_df = df[df["Station"] == selected_station]
+parameter = st.selectbox("📊 Parameter:", ["Temp", "pH", "ODO%", "ODO Conc", "Turbidity"])
 
-parameter_options = ["Temp", "pH", "ODO%", "ODO Conc", "Turbidity"]
-parameter = st.selectbox("📊 Parameter:", parameter_options)
+# ✅ Multiselect for Water Period and Day Period
+water_periods = st.multiselect("💧 Water Period(s):", ["LW", "RW", "HW", "FW"], default=["LW", "RW", "HW", "FW"])
+day_periods = st.multiselect("🕐 Day Period(s):", ["AM", "PM"], default=["AM", "PM"])
 
-period_options = ["All", "LW", "RW", "HW", "FW"]
-time_options = ["All", "AM", "PM"]
+# 📈 Optional lines with color mapping
+optional_lines = [
+    "Thermocline", "thermoInd", "epilimnion", "hypolimnion", "hML",
+    "buoyancy_freq", "depth_of_buoyancy", "wedderburn", "Schmidt_stability",
+    "heat_content", "seiche_period", "Lake_number", "Max Chloro"
+]
+selected_lines = st.multiselect("📈 Show Additional Horizontal Lines:", optional_lines)
 
-selected_water = st.selectbox("💧 Water Period:", period_options)
-selected_day = st.selectbox("🕐 Day Period:", time_options)
+# Assign unique colors to each line
+line_colors = {
+    "Thermocline": "red",
+    "thermoInd": "blue",
+    "epilimnion": "green",
+    "hypolimnion": "orange",
+    "hML": "purple",
+    "buoyancy_freq": "pink",
+    "depth_of_buoyancy": "brown",
+    "wedderburn": "cyan",
+    "Schmidt_stability": "gray",
+    "heat_content": "black",
+    "seiche_period": "gold",
+    "Lake_number": "magenta",
+    "Max Chloro": "darkgreen"
+}
 
-show_thermocline = st.checkbox("Show Thermocline", value=False)
-show_max_chloro = st.checkbox("Show Max Chloro", value=False)
+# Prepare data
+filtered_df = station_df[(station_df["WaterPeriod"].isin(water_periods)) & (station_df["DayPeriod"].isin(day_periods))]
+grouped = filtered_df.groupby(["WaterPeriod", "DayPeriod", "SheetID"])
 
-# 5️⃣ Préparation des courbes verticales
-available_periods = ["LW", "RW", "HW", "FW"]
-available_day = ["AM", "PM"]
-
-combinations = []
-for wp in available_periods:
-    for dp in available_day:
-        subset = station_df[(station_df["WaterPeriod"] == wp) & (station_df["DayPeriod"] == dp)]
-        if not subset.empty:
-            chosen_sheetid = subset["SheetID"].unique()[0]
-            subset_sheet = subset[subset["SheetID"] == chosen_sheetid]
-            combinations.append(subset_sheet)
-
-if combinations:
-    filtered_combined_df = pd.concat(combinations)
-else:
-    filtered_combined_df = pd.DataFrame()
-
-# Application des filtres
-if selected_water != "All":
-    filtered_combined_df = filtered_combined_df[filtered_combined_df["WaterPeriod"] == selected_water]
-if selected_day != "All":
-    filtered_combined_df = filtered_combined_df[filtered_combined_df["DayPeriod"] == selected_day]
-
-if filtered_combined_df.empty:
-    st.warning("❌ No data for this Water Period / Day Period combination.")
+if filtered_df.empty:
+    st.warning("❌ No data for the selected combination.")
 else:
     st.subheader("3️⃣ Vertical Profile Curve(s)")
-
     fig = go.Figure()
 
-    for (wp, dp, sid), data in filtered_combined_df.groupby(["WaterPeriod", "DayPeriod", "SheetID"]):
+    for (wp, dp, sid), data in grouped:
         label = f"{wp} {dp} (SheetID {sid})"
         data = data.sort_values("Profondeur")
 
@@ -142,27 +126,17 @@ else:
             name=label
         ))
 
-        if show_thermocline:
-            thermo_value = data["Thermocline"].iloc[0]
-            if pd.notna(thermo_value):
-                fig.add_trace(go.Scatter(
-                    x=[data[parameter].min(), data[parameter].max()],
-                    y=[thermo_value, thermo_value],
-                    mode='lines',
-                    line=dict(dash='dash', color='red'),
-                    name=f"Thermocline (SheetID {sid})"
-                ))
-
-        if show_max_chloro:
-            chloro_value = data["Max Chloro"].iloc[0]
-            if pd.notna(chloro_value):
-                fig.add_trace(go.Scatter(
-                    x=[data[parameter].min(), data[parameter].max()],
-                    y=[chloro_value, chloro_value],
-                    mode='lines',
-                    line=dict(dash='dot', color='green'),
-                    name=f"Max Chloro (SheetID {sid})"
-                ))
+        for line_var in selected_lines:
+            if line_var in data.columns:
+                val = data[line_var].iloc[0]
+                if pd.notna(val):
+                    fig.add_trace(go.Scatter(
+                        x=[data[parameter].min(), data[parameter].max()],
+                        y=[val, val],
+                        mode='lines',
+                        line=dict(dash='dot', color=line_colors.get(line_var, "gray")),
+                        name=f"{line_var} (SheetID {sid})"
+                    ))
 
     fig.update_yaxes(autorange="reversed", title="Depth (m)")
     fig.update_xaxes(title=parameter)
